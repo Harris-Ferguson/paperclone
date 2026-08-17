@@ -1,0 +1,4 @@
+// Intentionally empty. Shadows the stale duplicate
+// /Library/Developer/CommandLineTools/usr/include/swift/module.modulemap
+// (which redundantly redefines module SwiftBridging, already provided by the
+// sibling bridging.modulemap) via a clang VFS overlay — see build.sh.
