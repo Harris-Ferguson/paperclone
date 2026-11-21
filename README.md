@@ -5,8 +5,9 @@ whole screen — softening contrast and the glossy "light source" feel of the
 display. A local clone of [Paperman](https://paperman.cc/).
 
 - Transparent, **click-through** overlay (mouse/keyboard pass straight through)
-- "Vellum Mist" paper texture + an intensity slider
+- "Vellum Mist" paper texture + intensity, texture-size and grain-size sliders
 - Menu-bar only — no Dock icon
+- Texture size sets the tile repeat distance — raise it until the repeat disappears
 - Multi-monitor, static texture, ~0% CPU
 - Native Swift/AppKit, single process, no dependencies
 
@@ -75,6 +76,7 @@ Sources/
   AppDelegate.swift          menu-bar item, styled menu, overlay lifecycle, prefs
   OverlayWindow.swift        transparent click-through window per display
   PaperTexture.swift         the Vellum Mist texture parameters
+  PaperSettings.swift        user-tunable settings + UserDefaults persistence
   PaperTextureRenderer.swift native fractal-noise texture generator
   Icons.swift                menu-bar icon loading + colour swatches
 Resources/

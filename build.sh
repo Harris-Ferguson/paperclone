@@ -53,6 +53,7 @@ swiftc -O \
   Sources/AppDelegate.swift \
   Sources/OverlayWindow.swift \
   Sources/PaperTexture.swift \
+  Sources/PaperSettings.swift \
   Sources/PaperTextureRenderer.swift \
   Sources/Icons.swift \
   -framework AppKit \
