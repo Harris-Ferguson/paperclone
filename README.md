@@ -5,8 +5,9 @@ whole screen — softening contrast and the glossy "light source" feel of the
 display. A local clone of [Paperman](https://paperman.cc/).
 
 - Transparent, **click-through** overlay (mouse/keyboard pass straight through)
-- "Vellum Mist" paper texture + an intensity slider
+- "Vellum Mist" paper texture + wash, grain-strength, texture-size and grain-size sliders
 - Menu-bar only — no Dock icon
+- Texture size sets the tile repeat distance — raise it until the repeat disappears
 - Multi-monitor, static texture, ~0% CPU
 - Native Swift/AppKit, single process, no dependencies
 
@@ -46,7 +47,16 @@ there is no Dock icon and no window. Click the icon for the menu.
 Click the 📄 menu-bar icon:
 
 - **Enabled** — toggle the overlay on/off (the icon shows a slash when off)
-- **Intensity** — drag the slider; the live % updates as you go
+- **Wash** — flat veil of paper tint over the screen (softens contrast)
+- **Grain strength** — how visible the light/dark specks are, independent of the wash
+- **Texture size** — tile repeat distance; raise it until the repeat disappears
+- **Grain size** — size of the finest specks
+- **Formation** — strength of the broad cloudy blotches
+- **Fibres** — strength of the fibre strands
+- **Relief** — 0% is matte specks, 100% is embossed bumps
+- **Highlights** — how much of the light specks to keep; low keeps the grain equally strong on every colour
+- **Exclude Menu Bar** — keep the menu bar and its menus above the paper
+- **Reset Texture** — restore texture size, grain size, formation and fibres
 - **Quit PaperClone** — exit
 
 Your choices are remembered between launches.
@@ -75,6 +85,7 @@ Sources/
   AppDelegate.swift          menu-bar item, styled menu, overlay lifecycle, prefs
   OverlayWindow.swift        transparent click-through window per display
   PaperTexture.swift         the Vellum Mist texture parameters
+  PaperSettings.swift        user-tunable settings + UserDefaults persistence
   PaperTextureRenderer.swift native fractal-noise texture generator
   Icons.swift                menu-bar icon loading + colour swatches
 Resources/
