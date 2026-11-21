@@ -17,11 +17,13 @@ private final class TextureView: NSView {
 }
 
 /// A transparent, click-through, always-on-top window covering one display.
-/// It hosts a `TextureView` that paints the paper grain; because the window
+/// A flat wash view carries the paper tint and hosts a `TextureView` that
+/// paints the grain over it; because the window
 /// `ignoresMouseEvents`, all clicks and keystrokes pass straight through to
 /// whatever is behind it and it never takes focus.
 final class OverlayWindow: NSWindow {
 
+    private let washView = NSView()
     private let textureView = TextureView()
 
     init(screen: NSScreen) {
@@ -45,20 +47,27 @@ final class OverlayWindow: NSWindow {
 
         setFrame(screen.frame, display: true)
 
-        textureView.frame = NSRect(origin: .zero, size: screen.frame.size)
+        washView.wantsLayer = true
+        contentView = washView
+
+        textureView.frame = washView.bounds
         textureView.autoresizingMask = [.width, .height]
-        contentView = textureView
+        washView.addSubview(textureView)
     }
 
     // Borderless windows already refuse key/main status; make it explicit.
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
-    /// Paint `patternImage` at `intensity` opacity. Both are instant: the tile is
-    /// pre-rendered, and intensity is just the window's compositing alpha.
-    func apply(patternImage: NSImage, intensity: Double) {
+    /// Paint `patternImage` over a wash of the texture's tint. Wash and grain are
+    /// both instant: the tile is pre-rendered, and each is just a layer alpha.
+    func apply(patternImage: NSImage, texture: PaperTexture, settings: PaperSettings) {
+        washView.layer?.backgroundColor = NSColor(srgbRed: CGFloat(texture.tintR) / 255,
+                                                  green: CGFloat(texture.tintG) / 255,
+                                                  blue: CGFloat(texture.tintB) / 255,
+                                                  alpha: CGFloat(settings.wash)).cgColor
         textureView.patternImage = patternImage
-        alphaValue = CGFloat(intensity)
+        textureView.alphaValue = CGFloat(settings.grain)
     }
 
     func setVisible(_ visible: Bool) {

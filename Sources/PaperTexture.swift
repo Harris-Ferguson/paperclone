@@ -14,6 +14,10 @@ struct PaperTexture {
     let tintG: Int
     let tintB: Int
     let defaultOpacity: Double   // 0...1
+    let defaultTextureSize = 1.0 // tile edge multiplier
+
+    /// Fine-speck size in pixels the preset starts at.
+    var defaultGrainSize: Double { 1.0 / baseFrequency }
 
     /// The single texture the app ships: a semi-translucent haze for long
     /// reading sessions.

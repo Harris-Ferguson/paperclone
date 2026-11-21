@@ -2,21 +2,30 @@ import AppKit
 
 /// Renders a paper-texture preset into a small, seamlessly-tiling `NSImage`
 /// entirely on the CPU — no WebKit. The grain is fractal value-noise (fBm),
-/// multiplied by the preset tint and baked into an opaque bitmap. Because the
-/// overlay is static, this runs only when the preset changes (a few ms), so
+/// baked as light and dark specks in the tile's alpha channel, so it textures
+/// what is behind it without veiling it (the wash is a separate layer). Because the
+/// overlay is static, this runs only when the settings change (a few ms), so
 /// there's no per-frame cost and no helper processes.
 enum PaperTextureRenderer {
 
-    /// A tileable RGBA tile for `texture`. `pixelSize` is the bitmap edge in
-    /// pixels; `scale` maps it to points (2 → crisp on Retina).
-    static func tile(for texture: PaperTexture, pixelSize n: Int = 320, scale: CGFloat = 2) -> NSImage {
+    /// Bitmap edge in pixels: a larger texture size means a longer repeat distance.
+    static func pixelEdge(for settings: PaperSettings) -> Int {
+        Int((320 * settings.textureSize).rounded())
+    }
+
+    /// A tileable RGBA tile for `texture`, shaped by `settings` (grain size,
+    /// texture size). `scale` maps pixels to points (2 → crisp on Retina).
+    static func tile(for texture: PaperTexture,
+                     settings: PaperSettings,
+                     scale: CGFloat = 2) -> NSImage {
+        let n = pixelEdge(for: settings)
         let octaves = max(1, texture.numOctaves)
 
-        // baseFrequency ≈ cycles/pixel (SVG feTurbulence convention): it sets the
+        // 1/grainSize ≈ cycles/pixel (SVG feTurbulence convention): it sets the
         // FINEST grain. We build `octaves` bands from coarse → fine, each doubling
         // in frequency and halving in amplitude, so a broad mottle dominates and
         // fine grain rides on top — the way real paper fibre reads.
-        let finest = max(2.0, texture.baseFrequency * Double(n))
+        let finest = max(2.0, Double(n) / max(settings.grainSize, 0.1))
         let coarsest = max(2.0, finest / pow(2.0, Double(octaves - 1)))
 
         var cellsPer = [Int]()
@@ -29,15 +38,14 @@ enum PaperTextureRenderer {
             ampSum += a
         }
 
-        // How dark the fibres get relative to the paper base (0 = flat, 1 = full).
+        // Peak speck opacity before the grain-strength setting scales it.
         let grainDepth = 0.85
 
-        let tintR = Double(texture.tintR) / 255.0
-        let tintG = Double(texture.tintG) / 255.0
-        let tintB = Double(texture.tintB) / 255.0
-
         var pixels = [UInt8](repeating: 0, count: n * n * 4)
-        for y in 0..<n {
+        pixels.withUnsafeMutableBufferPointer { buffer in
+        let pixels = buffer
+        // Rows are independent, so render them across all cores.
+        DispatchQueue.concurrentPerform(iterations: n) { y in
             let v = Double(y) / Double(n)
             for x in 0..<n {
                 let u = Double(x) / Double(n)
@@ -46,14 +54,17 @@ enum PaperTextureRenderer {
                     val += amps[o] * valueNoise(u, v, cells: cellsPer[o], seed: texture.seed &+ o)
                 }
                 val /= ampSum                              // normalise to [0,1]
-                let grain = 1.0 - grainDepth * (1.0 - val) // mostly light, darker fibres
+                let signed = 2.0 * val - 1.0               // <0 dark speck, >0 light speck
+                let alpha = channel(grainDepth * abs(signed))
+                let white = signed > 0 ? alpha : 0         // premultiplied
 
                 let idx = (y * n + x) * 4
-                pixels[idx + 0] = channel(tintR * grain)
-                pixels[idx + 1] = channel(tintG * grain)
-                pixels[idx + 2] = channel(tintB * grain)
-                pixels[idx + 3] = 255
+                pixels[idx + 0] = white
+                pixels[idx + 1] = white
+                pixels[idx + 2] = white
+                pixels[idx + 3] = alpha
             }
+        }
         }
 
         let cs = CGColorSpaceCreateDeviceRGB()

@@ -1,33 +1,51 @@
 import AppKit
 
 /// Owns the whole app: the menu-bar item + menu, the per-display overlay
-/// windows, and the current state (enabled / intensity), which it persists in
+/// windows, and the current `PaperSettings`, which it persists in
 /// `UserDefaults` and fans out to every overlay. The texture is fixed to
 /// `PaperTexture.vellumMist`.
+/// One menu slider: which setting it edits, its range, and how to show it.
+private struct SliderSpec {
+    let title: String
+    let keyPath: WritableKeyPath<PaperSettings, Double>
+    let range: ClosedRange<Double>
+    let format: (Double) -> String
+    let rerendersTile: Bool
+
+    static func percent(_ value: Double) -> String { "\(Int((value * 100).rounded()))%" }
+    static func times(_ value: Double) -> String { String(format: "%.1f×", value) }
+    static func pixels(_ value: Double) -> String { String(format: "%.1f px", value) }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusItem: NSStatusItem!
     private var toggleItem: NSMenuItem!
-    private var slider: NSSlider!
-    private var intensityValueLabel: NSTextField!
+    private var sliderRows: [(slider: NSSlider, valueLabel: NSTextField)] = []
 
     private var overlays: [OverlayWindow] = []
+    private var pattern: NSImage?
+
+    // Tiles larger than this re-render on slider release instead of every drag tick.
+    private let liveRenderMaxPixelEdge = 2560
 
     private let texture = PaperTexture.vellumMist
 
-    private let defaults = UserDefaults.standard
-    private var enabled = true
-    private var intensity = PaperTexture.vellumMist.defaultOpacity   // 0...1
+    private var settings = PaperSettings.load(texture: .vellumMist)
 
-    private let minIntensity = 0.03
-    private let maxIntensity = 0.40
+    private let sliderSpecs = [
+        SliderSpec(title: "Wash", keyPath: \.wash, range: PaperSettings.washRange, format: SliderSpec.percent, rerendersTile: false),
+        SliderSpec(title: "Grain strength", keyPath: \.grain, range: PaperSettings.grainRange, format: SliderSpec.percent, rerendersTile: false),
+        SliderSpec(title: "Texture size", keyPath: \.textureSize, range: PaperSettings.textureSizeRange, format: SliderSpec.times, rerendersTile: true),
+        SliderSpec(title: "Grain size", keyPath: \.grainSize, range: PaperSettings.grainSizeRange, format: SliderSpec.pixels, rerendersTile: true),
+    ]
 
     // MARK: Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        loadPrefs()
         buildStatusItem()
         rebuildOverlays()
+        renderPattern()
         applyToAll()
 
         NotificationCenter.default.addObserver(
@@ -35,12 +53,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             selector: #selector(screensChanged),
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil)
-    }
-
-    private func loadPrefs() {
-        if defaults.object(forKey: "enabled") != nil { enabled = defaults.bool(forKey: "enabled") }
-        if defaults.object(forKey: "intensity") != nil { intensity = defaults.double(forKey: "intensity") }
-        intensity = min(max(intensity, minIntensity), maxIntensity)
     }
 
     // MARK: Menu bar
@@ -53,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateStatusIcon() {
         guard let button = statusItem.button else { return }
-        button.image = Icons.statusBar(enabled: enabled)
+        button.image = Icons.statusBar(enabled: settings.enabled)
         button.toolTip = "PaperClone — paper texture overlay"
     }
 
@@ -74,13 +86,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         toggleItem = NSMenuItem(title: "Enabled", action: #selector(toggleEnabled), keyEquivalent: "")
         toggleItem.target = self
-        toggleItem.state = enabled ? .on : .off
+        toggleItem.state = settings.enabled ? .on : .off
         toggleItem.image = Icons.symbol("power")
         menu.addItem(toggleItem)
 
-        let intensityItem = NSMenuItem()
-        intensityItem.view = buildIntensityView()
-        menu.addItem(intensityItem)
+        for (index, spec) in sliderSpecs.enumerated() {
+            let row = buildSliderRow(spec, tag: index)
+            sliderRows.append((row.slider, row.valueLabel))
+            let item = NSMenuItem()
+            item.view = row.view
+            menu.addItem(item)
+        }
+
+        let reset = NSMenuItem(title: "Reset Texture", action: #selector(resetTexture), keyEquivalent: "")
+        reset.target = self
+        reset.image = Icons.symbol("arrow.counterclockwise")
+        menu.addItem(reset)
 
         menu.addItem(.separator())
 
@@ -92,54 +113,77 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return menu
     }
 
-    private func percentString() -> String {
-        "\(Int((intensity * 100).rounded()))%"
-    }
-
-    private func buildIntensityView() -> NSView {
+    private func buildSliderRow(_ spec: SliderSpec, tag: Int) -> (view: NSView, slider: NSSlider, valueLabel: NSTextField) {
+        let value = settings[keyPath: spec.keyPath]
         let width: CGFloat = 244
         let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 56))
 
-        let title = NSTextField(labelWithString: "Intensity")
-        title.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-        title.textColor = .labelColor
-        title.frame = NSRect(x: 14, y: 33, width: 120, height: 16)
-        container.addSubview(title)
+        let titleLabel = NSTextField(labelWithString: spec.title)
+        titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        titleLabel.textColor = .labelColor
+        titleLabel.frame = NSRect(x: 14, y: 33, width: 120, height: 16)
+        container.addSubview(titleLabel)
 
-        intensityValueLabel = NSTextField(labelWithString: percentString())
-        intensityValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
-        intensityValueLabel.textColor = .secondaryLabelColor
-        intensityValueLabel.alignment = .right
-        intensityValueLabel.frame = NSRect(x: width - 62, y: 33, width: 48, height: 16)
-        container.addSubview(intensityValueLabel)
+        let valueLabel = NSTextField(labelWithString: spec.format(value))
+        valueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        valueLabel.textColor = .secondaryLabelColor
+        valueLabel.alignment = .right
+        valueLabel.frame = NSRect(x: width - 74, y: 33, width: 60, height: 16)
+        container.addSubview(valueLabel)
 
-        slider = NSSlider(value: intensity,
-                          minValue: minIntensity,
-                          maxValue: maxIntensity,
-                          target: self,
-                          action: #selector(intensityChanged(_:)))
-        slider.isContinuous = true
-        slider.controlSize = .small
-        slider.frame = NSRect(x: 14, y: 9, width: width - 28, height: 20)
-        container.addSubview(slider)
+        let rowSlider = NSSlider(value: value,
+                                 minValue: spec.range.lowerBound,
+                                 maxValue: spec.range.upperBound,
+                                 target: self,
+                                 action: #selector(sliderChanged(_:)))
+        rowSlider.tag = tag
+        rowSlider.isContinuous = true
+        rowSlider.controlSize = .small
+        rowSlider.frame = NSRect(x: 14, y: 9, width: width - 28, height: 20)
+        container.addSubview(rowSlider)
 
-        return container
+        return (container, rowSlider, valueLabel)
     }
 
     // MARK: Actions
 
     @objc private func toggleEnabled() {
-        enabled.toggle()
-        toggleItem.state = enabled ? .on : .off
+        settings.enabled.toggle()
+        toggleItem.state = settings.enabled ? .on : .off
         updateStatusIcon()
-        defaults.set(enabled, forKey: "enabled")
-        overlays.forEach { $0.setVisible(enabled) }
+        settings.save()
+        overlays.forEach { $0.setVisible(settings.enabled) }
     }
 
-    @objc private func intensityChanged(_ sender: NSSlider) {
-        intensity = sender.doubleValue
-        intensityValueLabel?.stringValue = percentString()
-        defaults.set(intensity, forKey: "intensity")
+    @objc private func sliderChanged(_ sender: NSSlider) {
+        let spec = sliderSpecs[sender.tag]
+        settings[keyPath: spec.keyPath] = sender.doubleValue
+        sliderRows[sender.tag].valueLabel.stringValue = spec.format(sender.doubleValue)
+        if spec.rerendersTile {
+            textureShapeChanged()
+        } else {
+            settings.save()
+            applyToAll()
+        }
+    }
+
+    private func textureShapeChanged() {
+        let dragging = NSApp.currentEvent?.type == .leftMouseDragged
+        if dragging && PaperTextureRenderer.pixelEdge(for: settings) > liveRenderMaxPixelEdge { return }
+        settings.save()
+        renderPattern()
+        applyToAll()
+    }
+
+    @objc private func resetTexture() {
+        settings.resetTexture(to: texture)
+        for (spec, row) in zip(sliderSpecs, sliderRows) {
+            let value = settings[keyPath: spec.keyPath]
+            row.slider.doubleValue = value
+            row.valueLabel.stringValue = spec.format(value)
+        }
+        settings.save()
+        renderPattern()
         applyToAll()
     }
 
@@ -159,11 +203,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         overlays = NSScreen.screens.map { OverlayWindow(screen: $0) }
     }
 
+    private func renderPattern() {
+        pattern = PaperTextureRenderer.tile(for: texture, settings: settings)   // render once, share across displays
+    }
+
     private func applyToAll() {
-        let pattern = PaperTextureRenderer.tile(for: texture)   // render once, share across displays
+        guard let pattern else { return }
         for overlay in overlays {
-            overlay.apply(patternImage: pattern, intensity: intensity)
-            overlay.setVisible(enabled)
+            overlay.apply(patternImage: pattern, texture: texture, settings: settings)
+            overlay.setVisible(settings.enabled)
         }
     }
 }
