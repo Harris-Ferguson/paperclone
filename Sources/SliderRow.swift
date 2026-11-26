@@ -1,5 +1,43 @@
 import AppKit
 
+/// Tracks drags from separate mouse events instead of NSSlider's blocking loop,
+/// which hangs the app when a menu swallows the mouse-up.
+private final class EventSlider: NSSlider {
+    private(set) var isDragging = false
+
+    override func mouseDown(with event: NSEvent) {
+        guard isEnabled else { return }
+        isDragging = true
+        track(event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        if isDragging { track(event) }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard isDragging else { return }
+        isDragging = false
+        track(event)
+    }
+
+    /// Finishes a drag whose mouse-up never arrived.
+    func endDrag() {
+        guard isDragging else { return }
+        isDragging = false
+        sendAction(action, to: target)
+    }
+
+    private func track(_ event: NSEvent) {
+        guard let cell = cell as? NSSliderCell else { return }
+        let bar = cell.barRect(flipped: isFlipped)
+        let knob = cell.knobThickness
+        let x = convert(event.locationInWindow, from: nil).x
+        doubleValue = min(max((x - bar.minX - knob / 2) / (bar.width - knob), 0), 1)
+        sendAction(action, to: target)
+    }
+}
+
 /// A titled slider with a live value read-out, used in the menu and the
 /// Advanced window. `onChange` reports the value and whether the drag is still
 /// in progress, so expensive work can wait for release.
@@ -8,7 +46,7 @@ final class SliderRow: NSView {
 
     var onChange: ((Double, Bool) -> Void)?
 
-    private let slider = NSSlider()
+    private let slider = EventSlider()
     private let valueLabel = NSTextField(labelWithString: "")
     private let range: ClosedRange<Double>
     private let logarithmic: Bool
@@ -74,6 +112,10 @@ final class SliderRow: NSView {
     @objc private func changed() {
         let current = value
         valueLabel.stringValue = format(current)
-        onChange?(current, NSApp.currentEvent?.type == .leftMouseDragged)
+        onChange?(current, slider.isDragging)
+    }
+
+    func endDrag() {
+        slider.endDrag()
     }
 }

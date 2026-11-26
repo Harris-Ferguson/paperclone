@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var toggleItem: NSMenuItem!
     private var paperItem: NSMenuItem!
     private var tuningWindow: TuningWindow?
+    private var menuRows: [SliderRow] = []
 
     private var overlays: [OverlayWindow] = []
     private var pattern: NSImage?
@@ -46,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
+        menu.delegate = self
 
         // Header — app name + paper glyph, not selectable.
         let header = NSMenuItem()
@@ -101,7 +103,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.refresh()
         }
 
-        for row in [strength, zoom, light] {
+        menuRows = [strength, zoom, light]
+        for row in menuRows {
             let item = NSMenuItem()
             item.view = row
             menu.addItem(item)
@@ -250,5 +253,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             overlay.apply(patternImage: pattern, paper: paper, ambientLight: settings.ambientLight)
             overlay.setVisible(settings.enabled)
         }
+    }
+}
+
+extension AppDelegate: NSMenuDelegate {
+    /// Releasing outside the menu closes it without a mouse-up reaching the slider.
+    func menuDidClose(_ menu: NSMenu) {
+        menuRows.forEach { $0.endDrag() }
     }
 }
